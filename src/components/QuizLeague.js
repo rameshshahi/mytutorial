@@ -161,6 +161,15 @@ function QuizLeague() {
     return getQuestionsForCategory(selectedCategory?.name);
   }, [activeQuestionKey, uploadedQuestionsByKey, selectedCategory]);
 
+  const inferCategoryIdForFile = (fileName) => {
+    const lowerFileName = fileName.toLowerCase();
+    const matchedCategory = categories.find((category) =>
+      lowerFileName.includes(category.name.toLowerCase())
+    );
+
+    return matchedCategory ? matchedCategory.id : selectedCategoryId;
+  };
+
   const visibleQuestions = useMemo(() => {
     return questions.filter((_, index) => !askedQuestionIndexes.includes(index));
   }, [questions, askedQuestionIndexes]);
@@ -226,35 +235,104 @@ function QuizLeague() {
   };
 
   const handleExcelUpload = async (event) => {
-    const targetFile = event.target.files?.[0];
-    if (!targetFile) {
+    const selectedFiles = Array.from(event.target.files || []);
+    if (selectedFiles.length === 0) {
       return;
     }
 
-    try {
-      const workbook = XLSX.read(await targetFile.arrayBuffer(), { type: 'array' });
-      const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const parsedQuestions = getQuestionRowsFromWorkbook(sheet);
+    const nextUploadedQuestionsByKey = { ...uploadedQuestionsByKey };
+    const results = [];
+    let loadedFiles = 0;
 
-      if (parsedQuestions.length === 0) {
-        setUploadMessage('No readable question rows were found in that workbook.');
-        return;
+    for (const targetFile of selectedFiles) {
+      try {
+        const workbook = XLSX.read(await targetFile.arrayBuffer(), { type: 'array' });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const parsedQuestions = getQuestionRowsFromWorkbook(sheet);
+
+        if (parsedQuestions.length === 0) {
+          results.push(`No readable rows found in ${targetFile.name}.`);
+          continue;
+        }
+
+        const categoryId = inferCategoryIdForFile(targetFile.name);
+        const workbookKey = `${selectedGameId}-${categoryId}`;
+
+        nextUploadedQuestionsByKey[workbookKey] = [
+          ...(nextUploadedQuestionsByKey[workbookKey] || []),
+          ...parsedQuestions,
+        ];
+        loadedFiles += 1;
+        const category = categories.find((item) => item.id === categoryId);
+        results.push(`Loaded ${parsedQuestions.length} questions from ${targetFile.name} for ${selectedGame?.name} / ${category?.name || selectedCategory?.name}.`);
+      } catch {
+        results.push(`Could not read ${targetFile.name} as a worksheet.`);
       }
-
-      const workbookKey = `${selectedGameId}-${selectedCategoryId}`;
-      setUploadedQuestionsByKey((prev) => ({
-        ...prev,
-        [workbookKey]: parsedQuestions,
-      }));
-      setSelectedQuestionIndex(null);
-      setIsAnswerVisible(false);
-      setLastResult('');
-      setUploadMessage(`Loaded ${parsedQuestions.length} question(s) from ${targetFile.name} for ${selectedGame?.name} / ${selectedCategory?.name}.`);
-    } catch {
-      setUploadMessage('The selected file could not be read as a worksheet.');
-    } finally {
-      event.target.value = '';
     }
+
+    setUploadedQuestionsByKey(nextUploadedQuestionsByKey);
+    setSelectedQuestionIndex(null);
+    setIsAnswerVisible(false);
+    setLastResult('');
+    setUploadMessage(`Imported ${loadedFiles} file(s) for ${selectedGame?.name}. ${results.join(' ')}`);
+    event.target.value = '';
+  };
+
+  const clearScoresForSelectedGame = () => {
+    if (!window.confirm(`Clear all scores for ${selectedGame?.name}? This cannot be undone.`)) {
+      return;
+    }
+
+    setScoreboard((prev) => ({
+      ...prev,
+      [selectedGameId]: teams.reduce((teamScores, team) => {
+        teamScores[team.id] = categories.reduce((categoryScores, category) => {
+          categoryScores[category.id] = 0;
+          return categoryScores;
+        }, {});
+        return teamScores;
+      }, {}),
+    }));
+
+    setLastResult(`Cleared all scores for ${selectedGame?.name}.`);
+  };
+
+  const deleteQuestionsForSelectedGame = () => {
+    if (!window.confirm(`Delete uploaded questions for ${selectedGame?.name}? This cannot be undone.`)) {
+      return;
+    }
+
+    setUploadedQuestionsByKey((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((key) => {
+        if (key.startsWith(`${selectedGameId}-`)) {
+          delete next[key];
+        }
+      });
+      return next;
+    });
+
+    setSelectedQuestionIndex(null);
+    setIsAnswerVisible(false);
+    setLastResult(`Deleted uploaded questions for ${selectedGame?.name}.`);
+  };
+
+  const deleteSelectedTeamName = () => {
+    if (!selectedTeamId) {
+      return;
+    }
+
+    const teamToDelete = teams.find((team) => team.id === selectedTeamId);
+    if (!teamToDelete) {
+      return;
+    }
+
+    if (!window.confirm(`Delete team ${teamToDelete.name}? This will remove the team and its scores.`)) {
+      return;
+    }
+
+    deleteTeam(selectedTeamId);
+    setLastResult(`Deleted team ${teamToDelete.name}.`);
   };
 
   const saveTeam = () => {
@@ -442,6 +520,7 @@ function QuizLeague() {
             { key: 'category', label: 'Category Management' },
             { key: 'play', label: 'Play Game' },
             { key: 'load', label: 'Load Question' },
+            { key: 'clear', label: 'Clear Data' },
             { key: 'score', label: 'Score' },
           ].map((section) => (
             <button
@@ -761,6 +840,7 @@ function QuizLeague() {
                 <input
                   type="file"
                   accept=".xlsx,.xls,.csv"
+                  multiple
                   onChange={handleExcelUpload}
                 />
               </div>
@@ -774,8 +854,60 @@ function QuizLeague() {
                   Loaded {uploadedQuestionsByKey[activeQuestionKey].length} question(s) for the current game/category pair.
                 </p>
               )}
+
+              <div className="input-row" style={{ marginTop: '16px' }}>
+                <button type="button" className="danger-btn" onClick={deleteQuestionsForSelectedGame}>
+                  Clear all uploaded questions for selected game
+                </button>
+              </div>
             </div>
           </>
+        )}
+
+        {activeSection === 'clear' && (
+          <div className="entry-card section-card">
+            <h3>Clear Data</h3>
+            <div className="play-controls">
+              <label>
+                Select game
+                <select value={selectedGameId} onChange={(e) => setSelectedGameId(e.target.value)}>
+                  {games.map((game) => (
+                    <option key={game.id} value={game.id}>
+                      {game.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Select team
+                <select value={selectedTeamId} onChange={(e) => setSelectedTeamId(e.target.value)}>
+                  {teams.map((team) => (
+                    <option key={team.id} value={team.id}>
+                      {team.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="input-row">
+              <button type="button" className="danger-btn" onClick={clearScoresForSelectedGame}>
+                Clear all scores for selected game
+              </button>
+              <button type="button" className="danger-btn" onClick={deleteQuestionsForSelectedGame}>
+                Delete uploaded questions for selected game
+              </button>
+            </div>
+
+            <div className="input-row" style={{ marginTop: '16px' }}>
+              <button type="button" className="danger-btn" onClick={deleteSelectedTeamName}>
+                Delete selected team
+              </button>
+            </div>
+
+            {lastResult && <p className="result-text">{lastResult}</p>}
+          </div>
         )}
 
         {activeSection === 'score' && (

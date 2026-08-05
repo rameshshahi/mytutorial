@@ -87,6 +87,7 @@ label {
   gap: 8px;
   font-weight: 700;
   min-width: 0;
+  width: 100%;
 }
 
 .score-entry-grid > label {
@@ -100,11 +101,31 @@ button {
   border-radius: 10px;
   padding: 6px 8px;
   font-size: 0.9rem;
+  box-sizing: border-box;
 }
 
 input,
 select {
   background: #e2e8f0;
+}
+
+@media (max-width: 640px) {
+  .input-row,
+  .play-controls,
+  .score-entry-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .input-row {
+    align-items: stretch;
+  }
+
+  .input-row button,
+  .input-row input,
+  .score-entry-grid .input-row button,
+  .score-entry-grid .input-row input {
+    width: 100%;
+  }
 }
 
 .upload-row {
@@ -145,6 +166,13 @@ select {
   gap: 8px;
   align-items: stretch;
   width: 100%;
+  min-width: 0;
+}
+
+.input-row input,
+.input-row button,
+.input-row select {
+  min-width: 0;
 }
 
 .score-entry-grid .input-row {
